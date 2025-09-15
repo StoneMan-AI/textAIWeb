@@ -1,0 +1,399 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>粒子形状变换动画</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            background-color: #000000;
+            color: white;
+            font-family: 'Inter', sans-serif;
+        }
+        #info-container {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 15px 25px;
+            background: rgba(40, 40, 40, 0.7);
+            border-radius: 15px;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            box-shadow: 0 4px 30px rgba(0, 0, 0, 0.2);
+            z-index: 10;
+        }
+        #changeShapeBtn {
+            background-color: #4a90e2;
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 15px;
+            transition: background-color 0.3s ease, transform 0.1s ease;
+        }
+        #changeShapeBtn:hover {
+            background-color: #5aa1f2;
+        }
+        #changeShapeBtn:active {
+            transform: scale(0.96);
+        }
+        #color-palette {
+            display: flex;
+            gap: 10px;
+        }
+        .color-swatch {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            cursor: pointer;
+            border: 2px solid rgba(255, 255, 255, 0.5);
+            transition: transform 0.2s ease;
+        }
+        .color-swatch:hover {
+            transform: scale(1.15);
+        }
+    </style>
+</head>
+<body>
+
+    <div id="info-container">
+        <button id="changeShapeBtn">切换形状</button>
+        <div id="color-palette">
+            <div class="color-swatch" style="background: linear-gradient(45deg, #ffcc00, #ff6699);" data-color="0xffcc00"></div>
+            <div class="color-swatch" style="background: linear-gradient(45deg, #00ff99, #33ccff);" data-color="0x00ff99"></div>
+            <div class="color-swatch" style="background: linear-gradient(45deg, #cc66ff, #ff66cc);" data-color="0xcc66ff"></div>
+            <div class="color-swatch" style="background: linear-gradient(45deg, #ffffff, #cccccc);" data-color="0xffffff"></div>
+        </div>
+    </div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.164.1/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.164.1/examples/jsm/",
+            "animejs": "https://cdn.jsdelivr.net/npm/animejs@3.2.1/lib/anime.es.js",
+            "simplex-noise": "https://cdn.skypack.dev/simplex-noise@4.0.1"
+        }
+    }
+    </script>
+    
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+        import anime from 'animejs';
+        import { createNoise2D } from 'simplex-noise';
+
+        let scene, camera, renderer, controls;
+        let points;
+        let currentShapeIndex = 0;
+
+        const PARTICLE_COUNT = 40000;
+        const shapeTargets = {};
+
+        // --- Shape Generation Functions ---
+
+        function generateSphereData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const radius = 10;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                // Fibonacci sphere for even distribution
+                const phi = Math.acos(-1 + (2 * i) / PARTICLE_COUNT);
+                const theta = Math.sqrt(PARTICLE_COUNT * Math.PI) * phi;
+                
+                data[i3] = radius * Math.cos(theta) * Math.sin(phi);
+                data[i3 + 1] = radius * Math.sin(theta) * Math.sin(phi);
+                data[i3 + 2] = radius * Math.cos(phi);
+            }
+            return data;
+        }
+
+        function generateCubeData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const size = 15;
+            const halfSize = size / 2;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const face = Math.floor(Math.random() * 6);
+                const x = Math.random() * size - halfSize;
+                const y = Math.random() * size - halfSize;
+                
+                switch (face) {
+                    case 0: data[i3] = x; data[i3 + 1] = y; data[i3 + 2] = halfSize; break;  // front
+                    case 1: data[i3] = x; data[i3 + 1] = y; data[i3 + 2] = -halfSize; break; // back
+                    case 2: data[i3] = halfSize; data[i3 + 1] = x; data[i3 + 2] = y; break;  // right
+                    case 3: data[i3] = -halfSize; data[i3 + 1] = x; data[i3 + 2] = y; break; // left
+                    case 4: data[i3] = x; data[i3 + 1] = halfSize; data[i3 + 2] = y; break;  // top
+                    case 5: data[i3] = x; data[i3 + 1] = -halfSize; data[i3 + 2] = y; break;  // bottom
+                }
+            }
+            return data;
+        }
+
+        function generatePyramidData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const height = 15;
+            const baseSize = 15;
+            const halfBase = baseSize / 2;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                let r1 = Math.random();
+                let r2 = Math.random();
+
+                // Ensure points are uniformly distributed within a triangle
+                if (r1 + r2 > 1) {
+                    r1 = 1 - r1;
+                    r2 = 1 - r2;
+                }
+
+                const face = Math.floor(Math.random() * 5);
+                if (face < 4) { // Triangular faces
+                    const p1 = new THREE.Vector3(0, height / 2, 0); // Apex
+                    const p2 = new THREE.Vector3(
+                        face === 0 || face === 1 ? halfBase : -halfBase, -height / 2, face === 0 || face === 2 ? halfBase : -halfBase
+                    );
+                    const p3 = new THREE.Vector3(
+                        face === 0 || face === 2 ? -halfBase : halfBase, -height / 2, face === 1 || face === 3 ? -halfBase : halfBase
+                    );
+                    const point = p1.clone().multiplyScalar(1 - r1 - r2)
+                                  .add(p2.clone().multiplyScalar(r1))
+                                  .add(p3.clone().multiplyScalar(r2));
+                    data[i3] = point.x;
+                    data[i3 + 1] = point.y;
+                    data[i3 + 2] = point.z;
+                } else { // Base face
+                    data[i3] = Math.random() * baseSize - halfBase;
+                    data[i3 + 1] = -height / 2;
+                    data[i3 + 2] = Math.random() * baseSize - halfBase;
+                }
+            }
+            return data;
+        }
+
+        function generateTorusData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const majorRadius = 8;
+            const minorRadius = 3;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const u = Math.random() * 2 * Math.PI;
+                const v = Math.random() * 2 * Math.PI;
+                data[i3] = (majorRadius + minorRadius * Math.cos(v)) * Math.cos(u);
+                data[i3 + 1] = (majorRadius + minorRadius * Math.cos(v)) * Math.sin(u);
+                data[i3 + 2] = minorRadius * Math.sin(v);
+            }
+            return data;
+        }
+
+        function generateGalaxyData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const radius = 15;
+            const arms = 3;
+            const spread = 0.5;
+            const bulgeFraction = 0.2;
+
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const r = Math.random();
+                const dist = Math.pow(r, 2) * radius;
+                const armIndex = Math.floor(Math.random() * arms);
+                const armAngle = (armIndex / arms) * 2 * Math.PI;
+                const particleAngle = dist * 0.3 + armAngle;
+                
+                const randomSpread = () => (Math.random() - 0.5) * spread * (dist / radius + 0.5);
+
+                if (Math.random() < bulgeFraction) { // Central bulge
+                    const bulgeDist = Math.random() * radius * 0.3;
+                    const theta = Math.random() * Math.PI * 2;
+                    const phi = Math.acos(2 * Math.random() - 1);
+                    data[i3] = bulgeDist * Math.sin(phi) * Math.cos(theta);
+                    data[i3+1] = bulgeDist * Math.sin(phi) * Math.sin(theta) * 0.5; // Flatter
+                    data[i3+2] = bulgeDist * Math.cos(phi);
+                } else { // Spiral arms
+                    data[i3] = Math.cos(particleAngle) * dist + randomSpread();
+                    data[i3 + 1] = (Math.random() - 0.5) * 0.5; // Make it flat
+                    data[i3 + 2] = Math.sin(particleAngle) * dist + randomSpread();
+                }
+            }
+            return data;
+        }
+
+        function generateNoiseSurfaceData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const noise2D = createNoise2D(Math.random);
+            const width = 25;
+            const height = 25;
+            const amplitude = 3;
+            const frequency = 0.2;
+            for(let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const x = (Math.random() - 0.5) * width;
+                const z = (Math.random() - 0.5) * height;
+                const y = noise2D(x * frequency, z * frequency) * amplitude;
+
+                data[i3] = x;
+                data[i3 + 1] = y;
+                data[i3 + 2] = z;
+            }
+            return data;
+        }
+
+        function generateRandomData() {
+            const data = new Float32Array(PARTICLE_COUNT * 3);
+            const radius = 25;
+            for (let i = 0; i < PARTICLE_COUNT; i++) {
+                const i3 = i * 3;
+                const phi = Math.random() * Math.PI * 2;
+                const costheta = Math.random() * 2 - 1;
+                const u = Math.random();
+                const theta = Math.acos(costheta);
+                const r = radius * Math.cbrt(u);
+
+                data[i3] = r * Math.sin(theta) * Math.cos(phi);
+                data[i3 + 1] = r * Math.sin(theta) * Math.sin(phi);
+                data[i3 + 2] = r * Math.cos(theta);
+            }
+            return data;
+        }
+
+        // --- Initialization ---
+
+        function init() {
+            // Scene
+            scene = new THREE.Scene();
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+            camera.position.z = 30;
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            document.body.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+
+            // Pre-generate shape data
+            shapeTargets.sphere = generateSphereData();
+            shapeTargets.cube = generateCubeData();
+            shapeTargets.pyramid = generatePyramidData();
+            shapeTargets.torus = generateTorusData();
+            shapeTargets.galaxy = generateGalaxyData();
+            shapeTargets.noise = generateNoiseSurfaceData();
+            shapeTargets.random = generateRandomData();
+
+            // Geometry and Material
+            const geometry = new THREE.BufferGeometry();
+            geometry.setAttribute('position', new THREE.BufferAttribute(shapeTargets.sphere.slice(), 3));
+
+            const material = new THREE.PointsMaterial({
+                color: 0xffcc00,
+                size: 0.1,
+                blending: THREE.AdditiveBlending,
+                transparent: true,
+                depthWrite: false,
+                sizeAttenuation: true,
+            });
+
+            // Points object
+            points = new THREE.Points(geometry, material);
+            scene.add(points);
+
+            // Event Listeners
+            window.addEventListener('resize', onWindowResize);
+            document.getElementById('changeShapeBtn').addEventListener('click', morphToNextShape);
+            document.querySelectorAll('.color-swatch').forEach(swatch => {
+                swatch.addEventListener('click', (e) => {
+                    const color = parseInt(e.target.dataset.color, 16);
+                    points.material.color.setHex(color);
+                });
+            });
+        }
+        
+        // --- Morphing Logic ---
+
+        function morphToNextShape() {
+            const shapeNames = Object.keys(shapeTargets).filter(name => name !== 'random');
+            currentShapeIndex = (currentShapeIndex + 1) % shapeNames.length;
+            const nextShapeName = shapeNames[currentShapeIndex];
+            
+            const sourceData = points.geometry.attributes.position.array.slice();
+            const explodeData = shapeTargets.random;
+            const targetData = shapeTargets[nextShapeName];
+            
+            const dummy = { progress: 0 };
+            
+            anime.timeline()
+                .add({
+                    targets: dummy,
+                    progress: 1,
+                    duration: 1200,
+                    easing: 'easeInQuad',
+                    update: () => {
+                        for (let i = 0; i < PARTICLE_COUNT; i++) {
+                            const i3 = i * 3;
+                            points.geometry.attributes.position.array[i3] = THREE.MathUtils.lerp(sourceData[i3], explodeData[i3], dummy.progress);
+                            points.geometry.attributes.position.array[i3 + 1] = THREE.MathUtils.lerp(sourceData[i3 + 1], explodeData[i3 + 1], dummy.progress);
+                            points.geometry.attributes.position.array[i3 + 2] = THREE.MathUtils.lerp(sourceData[i3 + 2], explodeData[i3 + 2], dummy.progress);
+                        }
+                        points.geometry.attributes.position.needsUpdate = true;
+                    }
+                })
+                .add({
+                    targets: dummy,
+                    progress: 0,
+                    duration: 1200,
+                    easing: 'easeOutQuad',
+                    update: () => {
+                        for (let i = 0; i < PARTICLE_COUNT; i++) {
+                            const i3 = i * 3;
+                            points.geometry.attributes.position.array[i3] = THREE.MathUtils.lerp(targetData[i3], explodeData[i3], dummy.progress);
+                            points.geometry.attributes.position.array[i3 + 1] = THREE.MathUtils.lerp(targetData[i3 + 1], explodeData[i3 + 1], dummy.progress);
+                            points.geometry.attributes.position.array[i3 + 2] = THREE.MathUtils.lerp(targetData[i3 + 2], explodeData[i3 + 2], dummy.progress);
+                        }
+                        points.geometry.attributes.position.needsUpdate = true;
+                    }
+                });
+        }
+
+
+        // --- Animation Loop ---
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            
+            if (points) {
+                points.rotation.y += 0.0005;
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        }
+
+        // --- Run ---
+        init();
+        animate();
+
+    </script>
+</body>
+</html>
